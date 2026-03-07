@@ -69,12 +69,19 @@
 }
 
 @keyframes blink-border {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.15; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.15;
+  }
 }
 
 .animate-blink-border {
-  animation: blink-border 1.2s ease-in-out infinite;
+  animation: blink-border 3s ease-in-out infinite;
 }
 
 @theme inline {
@@ -124,6 +131,7 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }

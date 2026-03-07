@@ -40,7 +40,7 @@ export default function GraphNodeComponent({
       {/* PP blinking dashed border layer */}
       {isPP && (
         <div
-          className="absolute rounded-full pointer-events-none animate-blink-border"
+          className="absolute inset-[-2px] rounded-full pointer-events-none animate-blink-border"
           style={{
             border: "2px dashed oklch(0.84 0.22 142)",
             boxSizing: "border-box",
