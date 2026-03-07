@@ -179,10 +179,10 @@ export default function GraphCanvas({
         {nodes.map((node) => (
           <foreignObject
             key={node.id}
-            x={node.x - 60}
-            y={node.y - 28}
-            width={120}
-            height={56}
+            x={node.x - 45}
+            y={node.y - 45}
+            width={90}
+            height={90}
             style={{ overflow: "visible" }}
           >
             <GraphNodeComponent

@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server"
-import fs from "fs"
-import path from "path"
+import { Redis } from "@upstash/redis"
 
-const DATA_FILE = path.join(process.cwd(), "data", "graph.json")
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+})
 
-function ensureDataDir() {
-  const dir = path.dirname(DATA_FILE)
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-}
+const GRAPH_KEY = "graph-data"
 
 const DEFAULT_GRAPH = {
   nodes: [
@@ -24,21 +21,26 @@ const DEFAULT_GRAPH = {
 }
 
 export async function GET() {
-  ensureDataDir()
   try {
-    if (!fs.existsSync(DATA_FILE)) {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(DEFAULT_GRAPH, null, 2), "utf-8")
+    const data = await redis.get(GRAPH_KEY)
+    if (!data) {
+      await redis.set(GRAPH_KEY, DEFAULT_GRAPH)
+      return NextResponse.json(DEFAULT_GRAPH)
     }
-    const raw = fs.readFileSync(DATA_FILE, "utf-8")
-    return NextResponse.json(JSON.parse(raw))
-  } catch {
+    return NextResponse.json(data)
+  } catch (error) {
+    console.error("Redis GET error:", error)
     return NextResponse.json(DEFAULT_GRAPH)
   }
 }
 
 export async function POST(req: Request) {
-  ensureDataDir()
-  const body = await req.json()
-  fs.writeFileSync(DATA_FILE, JSON.stringify(body, null, 2), "utf-8")
-  return NextResponse.json({ ok: true })
+  try {
+    const body = await req.json()
+    await redis.set(GRAPH_KEY, body)
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    console.error("Redis POST error:", error)
+    return NextResponse.json({ ok: false, error: "Failed to save" }, { status: 500 })
+  }
 }
