@@ -42,7 +42,7 @@ export default function GraphNodeComponent({
         <div
           className="absolute inset-0 rounded-full pointer-events-none animate-blink-border"
           style={{
-            border: "2px dashed oklch(0.84 0.22 142)",
+            border: "8px dashed oklch(0.84 0.22 142)",
             boxSizing: "border-box",
           }}
         />
