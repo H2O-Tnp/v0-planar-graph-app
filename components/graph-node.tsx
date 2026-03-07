@@ -7,7 +7,7 @@ interface GraphNodeProps {
   isSelected: boolean
   isDragging: boolean
   onMouseDown: (e: React.MouseEvent | React.TouchEvent) => void
-  onClick: () => void
+  onClick: (e: React.MouseEvent) => void
 }
 
 const NODE_SIZE = 90
@@ -28,7 +28,7 @@ export default function GraphNodeComponent({
       onTouchStart={onMouseDown}
       onClick={(e) => {
         e.stopPropagation()
-        onClick()
+        onClick(e)
       }}
       className="relative select-none"
       style={{
@@ -37,24 +37,15 @@ export default function GraphNodeComponent({
         height: NODE_SIZE,
       }}
     >
-      {/* PP blinking dashed border layer - using SVG for proper dashed circle */}
+      {/* PP blinking dashed border layer */}
       {isPP && (
-        <svg
-          className="animate-blink-border absolute inset-0 pointer-events-none"
-          width={NODE_SIZE}
-          height={NODE_SIZE}
-          viewBox={`0 0 ${NODE_SIZE} ${NODE_SIZE}`}
-        >
-          <circle
-            cx={NODE_SIZE / 2}
-            cy={NODE_SIZE / 2}
-            r={(NODE_SIZE / 2) - 2}
-            fill="none"
-            stroke="oklch(0.84 0.22 142)"
-            strokeWidth="2"
-            strokeDasharray="6 4"
-          />
-        </svg>
+        <div
+          className="absolute inset-0 rounded-full pointer-events-none animate-blink-border"
+          style={{
+            border: "2px dashed oklch(0.84 0.22 142)",
+            boxSizing: "border-box",
+          }}
+        />
       )}
 
       {/* ABO solid bold border */}

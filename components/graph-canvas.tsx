@@ -111,18 +111,40 @@ export default function GraphCanvas({
   }, [handleMouseMove, handleMouseUp])
 
   const handleNodeClick = useCallback(
-    (nodeId: string) => {
+    (nodeId: string, e: React.MouseEvent) => {
+      e.stopPropagation()
       if (draggingId) return
+      console.log("[v0] Node clicked:", nodeId)
       setSelectedNodeId(nodeId)
       setModalParentId(nodeId)
     },
     [draggingId]
   )
 
-  const handleCanvasClick = useCallback(() => {
-    setSelectedNodeId(null)
-    setModalParentId(null)
-  }, [])
+  const handleCanvasClick = useCallback(
+    (e: React.MouseEvent<SVGSVGElement>) => {
+      // If clicking on empty canvas with no nodes, add a root node
+      if (nodes.length === 0) {
+        const rect = svgRef.current?.getBoundingClientRect()
+        if (rect) {
+          const x = e.clientX - rect.left
+          const y = e.clientY - rect.top
+          const newNode: GraphNode = {
+            id: Date.now().toString(),
+            nickname: "Root",
+            state: "ABO",
+            x: Math.max(60, Math.min(svgSize.width - 60, x)),
+            y: Math.max(60, Math.min(svgSize.height - 60, y)),
+          }
+          onNodesChange([newNode])
+          return
+        }
+      }
+      setSelectedNodeId(null)
+      setModalParentId(null)
+    },
+    [nodes.length, svgSize, onNodesChange]
+  )
 
   const handleAddChild = useCallback(
     (parentId: string, nickname: string, state: "ABO" | "PP") => {
@@ -189,12 +211,24 @@ export default function GraphCanvas({
               node={node}
               isSelected={selectedNodeId === node.id}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
-              onClick={() => handleNodeClick(node.id)}
+              onClick={(e) => handleNodeClick(node.id, e)}
               isDragging={draggingId === node.id}
             />
           </foreignObject>
         ))}
       </svg>
+
+      {/* Empty state hint */}
+      {nodes.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <p
+            className="font-sans text-sm"
+            style={{ color: "oklch(0.45 0 0)" }}
+          >
+            Click anywhere to create your first node
+          </p>
+        </div>
+      )}
 
       {/* Add child modal */}
       {modalParentId && (
