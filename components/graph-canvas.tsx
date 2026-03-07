@@ -114,7 +114,6 @@ export default function GraphCanvas({
     (nodeId: string, e: React.MouseEvent) => {
       e.stopPropagation()
       if (draggingId) return
-      console.log("[v0] Node clicked:", nodeId)
       setSelectedNodeId(nodeId)
       setModalParentId(nodeId)
     },

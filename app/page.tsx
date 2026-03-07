@@ -41,22 +41,26 @@ export default function HomePage() {
 
   const handleNodesChange = useCallback(
     (nodes: GraphNode[]) => {
-      if (!graphData) return
-      const next = { ...graphData, nodes }
-      setGraphData(next)
-      save(next)
+      setGraphData((prev) => {
+        if (!prev) return prev
+        const next = { ...prev, nodes }
+        save(next)
+        return next
+      })
     },
-    [graphData, save]
+    [save]
   )
 
   const handleEdgesChange = useCallback(
     (edges: GraphEdge[]) => {
-      if (!graphData) return
-      const next = { ...graphData, edges }
-      setGraphData(next)
-      save(next)
+      setGraphData((prev) => {
+        if (!prev) return prev
+        const next = { ...prev, edges }
+        save(next)
+        return next
+      })
     },
-    [graphData, save]
+    [save]
   )
 
   return (
