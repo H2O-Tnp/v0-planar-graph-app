@@ -6,20 +6,21 @@ import type { GraphNode } from "@/lib/graph-types"
 interface AddChildModalProps {
   parentNode: GraphNode
   onAdd: (nickname: string, state: "ABO" | "PP") => void
+  onDelete: (nodeId: string) => void
   onClose: () => void
-  nodes: GraphNode[]
   svgSize: { width: number; height: number }
 }
 
 export default function AddChildModal({
   parentNode,
   onAdd,
+  onDelete,
   onClose,
-  nodes: _nodes,
   svgSize,
 }: AddChildModalProps) {
   const [nickname, setNickname] = useState("")
   const [state, setState] = useState<"ABO" | "PP">("ABO")
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export default function AddChildModal({
 
   // Position modal near parent node but keep in viewport
   const MODAL_W = 260
-  const MODAL_H = 200
+  const MODAL_H = 260
   const GAP = 20
 
   let left = parentNode.x + GAP
@@ -46,6 +47,11 @@ export default function AddChildModal({
     const trimmed = nickname.trim()
     if (!trimmed) return
     onAdd(trimmed, state)
+  }
+
+  const handleDelete = () => {
+    onDelete(parentNode.id)
+    onClose()
   }
 
   return (
@@ -73,88 +79,145 @@ export default function AddChildModal({
           className="font-sans text-xs font-semibold tracking-widest uppercase"
           style={{ color: "oklch(0.84 0.22 142)" }}
         >
-          Add child to {parentNode.nickname}
+          {parentNode.nickname}
         </p>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          {/* Nickname input */}
-          <input
-            ref={inputRef}
-            type="text"
-            value={nickname}
-            onChange={(e) => setNickname(e.target.value)}
-            placeholder="Nickname"
-            maxLength={24}
-            className="w-full rounded-lg px-3 py-2 font-sans text-sm outline-none"
-            style={{
-              background: "oklch(0.1 0 0)",
-              border: "1px solid oklch(0.28 0 0)",
-              color: "oklch(0.95 0 0)",
-              caretColor: "oklch(0.84 0.22 142)",
-            }}
-            onFocus={(e) => {
-              e.target.style.borderColor = "oklch(0.84 0.22 142 / 0.6)"
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = "oklch(0.28 0 0)"
-            }}
-          />
-
-          {/* State selector */}
-          <div className="flex gap-2">
-            {(["ABO", "PP"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setState(s)}
-                className="flex-1 rounded-lg py-1.5 font-mono text-xs font-semibold tracking-wider transition-all"
-                style={
-                  state === s
-                    ? {
-                        background: "oklch(0.84 0.22 142 / 0.15)",
-                        border: "1.5px solid oklch(0.84 0.22 142)",
-                        color: "oklch(0.84 0.22 142)",
-                      }
-                    : {
-                        background: "oklch(0.1 0 0)",
-                        border: "1px solid oklch(0.28 0 0)",
-                        color: "oklch(0.55 0 0)",
-                      }
-                }
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 rounded-lg py-1.5 font-sans text-xs transition-all"
+        {!showDeleteConfirm ? (
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            {/* Nickname input */}
+            <input
+              ref={inputRef}
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="Add child nickname..."
+              maxLength={24}
+              className="w-full rounded-lg px-3 py-2 font-sans text-sm outline-none"
               style={{
                 background: "oklch(0.1 0 0)",
                 border: "1px solid oklch(0.28 0 0)",
-                color: "oklch(0.55 0 0)",
+                color: "oklch(0.95 0 0)",
+                caretColor: "oklch(0.84 0.22 142)",
               }}
-            >
-              Cancel
-            </button>
+              onFocus={(e) => {
+                e.target.style.borderColor = "oklch(0.84 0.22 142 / 0.6)"
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "oklch(0.28 0 0)"
+              }}
+            />
+
+            {/* State selector */}
+            <div className="flex gap-2">
+              {(["ABO", "PP"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setState(s)}
+                  className="flex-1 rounded-lg py-1.5 font-mono text-xs font-semibold tracking-wider transition-all"
+                  style={
+                    state === s
+                      ? {
+                          background: "oklch(0.84 0.22 142 / 0.15)",
+                          border: "1.5px solid oklch(0.84 0.22 142)",
+                          color: "oklch(0.84 0.22 142)",
+                        }
+                      : {
+                          background: "oklch(0.1 0 0)",
+                          border: "1px solid oklch(0.28 0 0)",
+                          color: "oklch(0.55 0 0)",
+                        }
+                  }
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            {/* Add button */}
             <button
               type="submit"
               disabled={!nickname.trim()}
-              className="flex-1 rounded-lg py-1.5 font-sans text-xs font-semibold transition-all disabled:opacity-40"
+              className="w-full rounded-lg py-2 font-sans text-xs font-semibold transition-all disabled:opacity-40"
               style={{
                 background: "oklch(0.84 0.22 142 / 0.18)",
                 border: "1.5px solid oklch(0.84 0.22 142)",
                 color: "oklch(0.84 0.22 142)",
               }}
             >
-              Add Node
+              Add Child Node
             </button>
+
+            {/* Divider */}
+            <div
+              className="w-full h-px"
+              style={{ background: "oklch(0.25 0 0)" }}
+            />
+
+            {/* Delete button */}
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="w-full rounded-lg py-2 font-sans text-xs transition-all"
+              style={{
+                background: "oklch(0.12 0 0)",
+                border: "1px solid oklch(0.35 0.15 25)",
+                color: "oklch(0.65 0.2 25)",
+              }}
+            >
+              Delete This Node
+            </button>
+
+            {/* Cancel */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full rounded-lg py-1.5 font-sans text-xs transition-all"
+              style={{
+                background: "transparent",
+                color: "oklch(0.45 0 0)",
+              }}
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p
+              className="font-sans text-sm"
+              style={{ color: "oklch(0.75 0 0)" }}
+            >
+              Delete <strong style={{ color: "oklch(0.95 0 0)" }}>{parentNode.nickname}</strong>?
+              This will also remove all connected edges.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 rounded-lg py-2 font-sans text-xs transition-all"
+                style={{
+                  background: "oklch(0.1 0 0)",
+                  border: "1px solid oklch(0.28 0 0)",
+                  color: "oklch(0.55 0 0)",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="flex-1 rounded-lg py-2 font-sans text-xs font-semibold transition-all"
+                style={{
+                  background: "oklch(0.5 0.2 25 / 0.2)",
+                  border: "1.5px solid oklch(0.6 0.2 25)",
+                  color: "oklch(0.7 0.2 25)",
+                }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
-        </form>
+        )}
       </div>
     </>
   )

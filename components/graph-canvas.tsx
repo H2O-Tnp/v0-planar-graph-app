@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { GraphNode, GraphEdge } from "@/lib/graph-types"
 import GraphNodeComponent from "@/components/graph-node"
 import AddChildModal from "@/components/add-child-modal"
+import { autoArrangeNodes, countEdgeCrossings } from "@/lib/graph-layout"
 
 interface GraphCanvasProps {
   nodes: GraphNode[]
@@ -149,14 +150,45 @@ export default function GraphCanvas({
     (parentId: string, nickname: string, state: "ABO" | "PP") => {
       const parent = nodes.find((n) => n.id === parentId)
       if (!parent) return
-      const angle = Math.random() * Math.PI * 2
-      const dist = 160
+
+      // Find angle that minimizes overlap with existing children
+      const connectedEdges = edges.filter(
+        (e) => e.source === parentId || e.target === parentId
+      )
+      const connectedNodes = connectedEdges.map((e) =>
+        e.source === parentId
+          ? nodes.find((n) => n.id === e.target)
+          : nodes.find((n) => n.id === e.source)
+      ).filter(Boolean) as GraphNode[]
+
+      let bestAngle = 0
+      let maxMinDist = 0
+
+      // Try 12 angles and pick the one with most distance from existing children
+      for (let i = 0; i < 12; i++) {
+        const testAngle = (i / 12) * Math.PI * 2
+        let minDist = Infinity
+
+        for (const cn of connectedNodes) {
+          const existingAngle = Math.atan2(cn.y - parent.y, cn.x - parent.x)
+          const angleDiff = Math.abs(testAngle - existingAngle)
+          const normalizedDiff = Math.min(angleDiff, Math.PI * 2 - angleDiff)
+          minDist = Math.min(minDist, normalizedDiff)
+        }
+
+        if (minDist > maxMinDist) {
+          maxMinDist = minDist
+          bestAngle = testAngle
+        }
+      }
+
+      const dist = 140
       const newNode: GraphNode = {
         id: Date.now().toString(),
         nickname,
         state,
-        x: Math.max(60, Math.min(svgSize.width - 60, parent.x + Math.cos(angle) * dist)),
-        y: Math.max(30, Math.min(svgSize.height - 30, parent.y + Math.sin(angle) * dist)),
+        x: Math.max(60, Math.min(svgSize.width - 60, parent.x + Math.cos(bestAngle) * dist)),
+        y: Math.max(30, Math.min(svgSize.height - 30, parent.y + Math.sin(bestAngle) * dist)),
       }
       const newEdge: GraphEdge = { source: parentId, target: newNode.id }
       onNodesChange([...nodes, newNode])
@@ -167,8 +199,55 @@ export default function GraphCanvas({
     [nodes, edges, onNodesChange, onEdgesChange, svgSize]
   )
 
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      // Remove node and all connected edges
+      const newNodes = nodes.filter((n) => n.id !== nodeId)
+      const newEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId)
+      onNodesChange(newNodes)
+      onEdgesChange(newEdges)
+      setModalParentId(null)
+      setSelectedNodeId(null)
+    },
+    [nodes, edges, onNodesChange, onEdgesChange]
+  )
+
+  const handleAutoArrange = useCallback(() => {
+    if (nodes.length < 2) return
+    const arranged = autoArrangeNodes(nodes, edges, svgSize.width, svgSize.height, 150)
+    onNodesChange(arranged)
+  }, [nodes, edges, svgSize, onNodesChange])
+
+  // Calculate crossing count for display
+  const crossingCount = countEdgeCrossings(nodes, edges)
+
   return (
     <div className="relative w-full h-full overflow-hidden">
+      {/* Auto-arrange button */}
+      {nodes.length >= 2 && (
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-3">
+          {crossingCount > 0 && (
+            <span
+              className="font-mono text-xs"
+              style={{ color: "oklch(0.65 0.2 25)" }}
+            >
+              {crossingCount} crossing{crossingCount > 1 ? "s" : ""}
+            </span>
+          )}
+          <button
+            onClick={handleAutoArrange}
+            className="rounded-lg px-3 py-1.5 font-sans text-xs font-medium transition-all hover:opacity-80"
+            style={{
+              background: "oklch(0.15 0 0)",
+              border: "1px solid oklch(0.84 0.22 142 / 0.5)",
+              color: "oklch(0.84 0.22 142)",
+            }}
+          >
+            Auto Arrange
+          </button>
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         width={svgSize.width}
@@ -234,8 +313,8 @@ export default function GraphCanvas({
         <AddChildModal
           parentNode={nodes.find((n) => n.id === modalParentId)!}
           onAdd={(nickname, state) => handleAddChild(modalParentId, nickname, state)}
+          onDelete={handleDeleteNode}
           onClose={() => setModalParentId(null)}
-          nodes={nodes}
           svgSize={svgSize}
         />
       )}
