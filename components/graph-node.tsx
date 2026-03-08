@@ -42,7 +42,7 @@ export default function GraphNodeComponent({
         <div
           className="absolute inset-[-2px] rounded-full pointer-events-none animate-blink-border"
           style={{
-            border: "2px dashed oklch(0.84 0.22 142)",
+            border: "4px dashed oklch(0.84 0.22 142)",
             boxSizing: "border-box",
           }}
         />
@@ -55,8 +55,8 @@ export default function GraphNodeComponent({
           style={{
             border: "3px solid oklch(0.84 0.22 142)",
             boxShadow: isSelected
-              ? "0 0 18px 4px oklch(0.84 0.22 142 / 0.6)"
-              : "0 0 10px 2px oklch(0.84 0.22 142 / 0.35)",
+              ? "0 0 18px 12px oklch(0.84 0.22 142 / 0.6)"
+              : "0 0 10px 8px oklch(0.84 0.22 142 / 0.35)",
             boxSizing: "border-box",
           }}
         />
@@ -77,10 +77,11 @@ export default function GraphNodeComponent({
       <div
         className="absolute inset-0 flex flex-col items-center justify-center rounded-full"
         style={{
-          background: "oklch(0.13 0 0)",
-          boxShadow:
-            "0 4px 24px 0 rgba(0,0,0,0.7), 0 1.5px 6px 0 rgba(0,0,0,0.5)",
-        }}
+          background: "oklch(0.2 0 0)",
+          // boxShadow:
+          // "0 4px 24px 10px rgba(0,0,0,0.7),0 1.5px 6px 4px oklch(0.84 0.22 142)",
+        }
+        }
       >
         <span
           className="font-sans text-xs font-semibold leading-tight text-center truncate px-2"
