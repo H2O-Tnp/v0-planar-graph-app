@@ -89,13 +89,14 @@ export default function GraphCanvas({
       didMoveRef.current = true
       if ("touches" in e) e.preventDefault()
       const pt = getSVGPoint(e)
+      const NODE_RADIUS = 45 // nodes are 90x90, radius is 45
       onNodesChange(
         nodes.map((n) =>
           n.id === draggingId
             ? {
                 ...n,
-                x: Math.max(60, Math.min(svgSize.width - 60, pt.x - dragOffset.current.x)),
-                y: Math.max(30, Math.min(svgSize.height - 30, pt.y - dragOffset.current.y)),
+                x: Math.max(NODE_RADIUS, Math.min(svgSize.width - NODE_RADIUS, pt.x - dragOffset.current.x)),
+                y: Math.max(NODE_RADIUS, Math.min(svgSize.height - NODE_RADIUS, pt.y - dragOffset.current.y)),
               }
             : n
         )
@@ -199,12 +200,13 @@ export default function GraphCanvas({
         if (rect) {
           const x = e.clientX - rect.left - panOffset.x
           const y = e.clientY - rect.top - panOffset.y
+          const NODE_RADIUS = 45
           const newNode: GraphNode = {
             id: Date.now().toString(),
             nickname: "Root",
             state: "ABO",
-            x: Math.max(60, Math.min(svgSize.width - 60, x)),
-            y: Math.max(60, Math.min(svgSize.height - 60, y)),
+            x: Math.max(NODE_RADIUS, Math.min(svgSize.width - NODE_RADIUS, x)),
+            y: Math.max(NODE_RADIUS, Math.min(svgSize.height - NODE_RADIUS, y)),
           }
           onNodesChange([newNode])
           return
