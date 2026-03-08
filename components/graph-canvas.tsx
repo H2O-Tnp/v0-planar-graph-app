@@ -101,23 +101,6 @@ export default function GraphCanvas({
     setDraggingId(null)
   }, [])
 
-  useEffect(() => {
-    window.addEventListener("mousemove", handleMouseMove)
-    window.addEventListener("mousemove", handleCanvasMouseMove)
-    window.addEventListener("mouseup", handleMouseUp)
-    window.addEventListener("mouseup", handleCanvasMouseUp)
-    window.addEventListener("touchmove", handleMouseMove, { passive: false })
-    window.addEventListener("touchend", handleMouseUp)
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove)
-      window.removeEventListener("mousemove", handleCanvasMouseMove)
-      window.removeEventListener("mouseup", handleMouseUp)
-      window.removeEventListener("mouseup", handleCanvasMouseUp)
-      window.removeEventListener("touchmove", handleMouseMove)
-      window.removeEventListener("touchend", handleMouseUp)
-    }
-  }, [handleMouseMove, handleMouseUp, handleCanvasMouseMove, handleCanvasMouseUp])
-
   const handleNodeClick = useCallback(
     (nodeId: string, e: React.MouseEvent) => {
       e.stopPropagation()
@@ -158,6 +141,24 @@ export default function GraphCanvas({
   const handleCanvasMouseUp = useCallback(() => {
     setIsPanning(false)
   }, [])
+
+  // Global mouse/touch listeners for dragging nodes and panning
+  useEffect(() => {
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("mousemove", handleCanvasMouseMove)
+    window.addEventListener("mouseup", handleMouseUp)
+    window.addEventListener("mouseup", handleCanvasMouseUp)
+    window.addEventListener("touchmove", handleMouseMove, { passive: false })
+    window.addEventListener("touchend", handleMouseUp)
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mousemove", handleCanvasMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+      window.removeEventListener("mouseup", handleCanvasMouseUp)
+      window.removeEventListener("touchmove", handleMouseMove)
+      window.removeEventListener("touchend", handleMouseUp)
+    }
+  }, [handleMouseMove, handleMouseUp, handleCanvasMouseMove, handleCanvasMouseUp])
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
