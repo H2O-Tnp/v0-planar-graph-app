@@ -6,6 +6,10 @@ import GraphNodeComponent from "@/components/graph-node"
 import AddChildModal from "@/components/add-child-modal"
 import { autoArrangeNodes, countEdgeCrossings } from "@/lib/graph-layout"
 
+const NODE_RADIUS = 45
+const MIN_ZOOM = 0.2
+const MAX_ZOOM = 3
+
 interface GraphCanvasProps {
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -19,82 +23,119 @@ export default function GraphCanvas({
   onNodesChange,
   onEdgesChange,
 }: GraphCanvasProps) {
-  const svgRef = useRef<SVGSVGElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [viewportSize, setViewportSize] = useState({ width: 375, height: 600 })
+  // pan/zoom state — transform applied to the inner <g>
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
+
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const dragOffset = useRef({ x: 0, y: 0 })
   const [modalParentId, setModalParentId] = useState<string | null>(null)
-  const [svgSize, setSvgSize] = useState({ width: 1280, height: 720 })
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+
+  // panning state
   const [isPanning, setIsPanning] = useState(false)
   const panStartRef = useRef({ x: 0, y: 0 })
+  const didMoveRef = useRef(false)
+  // track previous pinch distance for zoom
+  const lastPinchDist = useRef<number | null>(null)
 
-  // Resize observer
+  // Observe container size
   useEffect(() => {
-    const el = svgRef.current?.parentElement
+    const el = containerRef.current
     if (!el) return
     const obs = new ResizeObserver((entries) => {
       for (const e of entries) {
-        setSvgSize({ width: e.contentRect.width, height: e.contentRect.height })
+        setViewportSize({ width: e.contentRect.width, height: e.contentRect.height })
       }
     })
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
 
-  const getSVGPoint = useCallback(
-    (e: MouseEvent | TouchEvent): { x: number; y: number } => {
-      const svg = svgRef.current
-      if (!svg) return { x: 0, y: 0 }
-      const rect = svg.getBoundingClientRect()
-      const clientX = "touches" in e ? e.touches[0].clientX : e.clientX
-      const clientY = "touches" in e ? e.touches[0].clientY : e.clientY
-      return {
-        x: clientX - rect.left,
-        y: clientY - rect.top,
-      }
+  // Fit all nodes into view whenever nodes first load or viewport changes
+  const didFit = useRef(false)
+  useEffect(() => {
+    if (nodes.length === 0) { didFit.current = false; return }
+    if (didFit.current) return
+    didFit.current = true
+    fitNodesToView(nodes, viewportSize.width, viewportSize.height)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes.length > 0, viewportSize.width, viewportSize.height])
+
+  const fitNodesToView = useCallback(
+    (nodeList: GraphNode[], vw: number, vh: number) => {
+      if (nodeList.length === 0) return
+      const xs = nodeList.map((n) => n.x)
+      const ys = nodeList.map((n) => n.y)
+      const minX = Math.min(...xs) - NODE_RADIUS
+      const maxX = Math.max(...xs) + NODE_RADIUS
+      const minY = Math.min(...ys) - NODE_RADIUS
+      const maxY = Math.max(...ys) + NODE_RADIUS
+      const contentW = maxX - minX || 1
+      const contentH = maxY - minY || 1
+      const padding = 60
+      const newZoom = Math.min(
+        (vw - padding * 2) / contentW,
+        (vh - padding * 2) / contentH,
+        1 // don't zoom in past 1x
+      )
+      const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom))
+      const newPanX = (vw - contentW * clampedZoom) / 2 - minX * clampedZoom
+      const newPanY = (vh - contentH * clampedZoom) / 2 - minY * clampedZoom
+      setPan({ x: newPanX, y: newPanY })
+      setZoom(clampedZoom)
     },
     []
   )
 
+  // Convert screen coordinates to world (canvas) coordinates
+  const screenToWorld = useCallback(
+    (sx: number, sy: number) => ({
+      x: (sx - pan.x) / zoom,
+      y: (sy - pan.y) / zoom,
+    }),
+    [pan, zoom]
+  )
+
+  // ── Node dragging ──────────────────────────────────────────────────────────
   const handleNodeMouseDown = useCallback(
     (e: React.MouseEvent | React.TouchEvent, nodeId: string) => {
       e.stopPropagation()
       const node = nodes.find((n) => n.id === nodeId)
       if (!node) return
-      const svg = svgRef.current
-      if (!svg) return
-      const rect = svg.getBoundingClientRect()
-      const clientX =
-        "touches" in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX
-      const clientY =
-        "touches" in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY
-      dragOffset.current = {
-        x: clientX - rect.left - node.x,
-        y: clientY - rect.top - node.y,
-      }
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const clientX = "touches" in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX
+      const clientY = "touches" in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY
+      const worldPos = screenToWorld(clientX - rect.left, clientY - rect.top)
+      dragOffset.current = { x: worldPos.x - node.x, y: worldPos.y - node.y }
+      didMoveRef.current = false
       setDraggingId(nodeId)
     },
-    [nodes]
+    [nodes, screenToWorld]
   )
 
   const handleMouseMove = useCallback(
     (e: MouseEvent | TouchEvent) => {
       if (!draggingId) return
-      const pt = getSVGPoint(e)
+      didMoveRef.current = true
+      if ("touches" in e) e.preventDefault()
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const clientX = "touches" in e ? e.touches[0].clientX : (e as MouseEvent).clientX
+      const clientY = "touches" in e ? e.touches[0].clientY : (e as MouseEvent).clientY
+      const world = screenToWorld(clientX - rect.left, clientY - rect.top)
       onNodesChange(
         nodes.map((n) =>
           n.id === draggingId
-            ? {
-                ...n,
-                x: Math.max(60, Math.min(svgSize.width - 60, pt.x - dragOffset.current.x)),
-                y: Math.max(30, Math.min(svgSize.height - 30, pt.y - dragOffset.current.y)),
-              }
+            ? { ...n, x: world.x - dragOffset.current.x, y: world.y - dragOffset.current.y }
             : n
         )
       )
     },
-    [draggingId, getSVGPoint, nodes, onNodesChange, svgSize]
+    [draggingId, screenToWorld, nodes, onNodesChange]
   )
 
   const handleMouseUp = useCallback(() => {
@@ -104,6 +145,7 @@ export default function GraphCanvas({
   const handleNodeClick = useCallback(
     (nodeId: string, e: React.MouseEvent) => {
       e.stopPropagation()
+      if (didMoveRef.current) { didMoveRef.current = false; return }
       if (draggingId) return
       setSelectedNodeId(nodeId)
       setModalParentId(nodeId)
@@ -111,168 +153,165 @@ export default function GraphCanvas({
     [draggingId]
   )
 
-  const handleCanvasMouseDown = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>) => {
-      // Only pan if clicking on empty canvas (not on a node)
-      const target = e.target as SVGElement
-      if (target.tagName !== "svg") return
-      
+  // ── Canvas panning ─────────────────────────────────────────────────────────
+  const getClientXY = (e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent) => {
+    if ("touches" in e) {
+      const t = (e as TouchEvent).touches[0] ?? (e as TouchEvent).changedTouches[0]
+      return { clientX: t.clientX, clientY: t.clientY }
+    }
+    return { clientX: (e as MouseEvent).clientX, clientY: (e as MouseEvent).clientY }
+  }
+
+  const handleCanvasPointerDown = useCallback(
+    (e: React.MouseEvent<SVGSVGElement> | React.TouchEvent<SVGSVGElement>) => {
+      const target = e.target as Element
+      const tagName = target.tagName.toLowerCase()
+      if (tagName !== "svg" && tagName !== "line" && tagName !== "g" && tagName !== "rect") return
+      // Pinch-to-zoom: two touches — handled in move
+      if ("touches" in e && (e as React.TouchEvent).touches.length === 2) return
+      const { clientX, clientY } = getClientXY(e as unknown as MouseEvent)
       setIsPanning(true)
-      panStartRef.current = {
-        x: e.clientX - panOffset.x,
-        y: e.clientY - panOffset.y,
-      }
+      didMoveRef.current = false
+      panStartRef.current = { x: clientX - pan.x, y: clientY - pan.y }
     },
-    [panOffset]
+    [pan]
   )
 
-  const handleCanvasMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isPanning) return
-      const newPanOffset = {
-        x: e.clientX - panStartRef.current.x,
-        y: e.clientY - panStartRef.current.y,
+  const handleCanvasPointerMove = useCallback(
+    (e: MouseEvent | TouchEvent) => {
+      // Pinch-to-zoom
+      if ("touches" in e && (e as TouchEvent).touches.length === 2) {
+        const t = (e as TouchEvent).touches
+        const dist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+        if (lastPinchDist.current !== null) {
+          const delta = dist / lastPinchDist.current
+          setZoom((z) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * delta)))
+        }
+        lastPinchDist.current = dist
+        return
       }
-      setPanOffset(newPanOffset)
+      if (!isPanning) return
+      didMoveRef.current = true
+      const { clientX, clientY } = getClientXY(e)
+      setPan({ x: clientX - panStartRef.current.x, y: clientY - panStartRef.current.y })
     },
     [isPanning]
   )
 
-  const handleCanvasMouseUp = useCallback(() => {
+  const handleCanvasPointerUp = useCallback(() => {
     setIsPanning(false)
+    lastPinchDist.current = null
   }, [])
 
-  // Global mouse/touch listeners for dragging nodes and panning
+  // ── Global listeners ───────────────────────────────────────────────────────
   useEffect(() => {
-    window.addEventListener("mousemove", handleMouseMove)
-    window.addEventListener("mousemove", handleCanvasMouseMove)
-    window.addEventListener("mouseup", handleMouseUp)
-    window.addEventListener("mouseup", handleCanvasMouseUp)
-    window.addEventListener("touchmove", handleMouseMove, { passive: false })
-    window.addEventListener("touchend", handleMouseUp)
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove)
-      window.removeEventListener("mousemove", handleCanvasMouseMove)
-      window.removeEventListener("mouseup", handleMouseUp)
-      window.removeEventListener("mouseup", handleCanvasMouseUp)
-      window.removeEventListener("touchmove", handleMouseMove)
-      window.removeEventListener("touchend", handleMouseUp)
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      handleMouseMove(e)
+      handleCanvasPointerMove(e)
     }
-  }, [handleMouseMove, handleMouseUp, handleCanvasMouseMove, handleCanvasMouseUp])
+    const onUp = () => {
+      handleMouseUp()
+      handleCanvasPointerUp()
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    window.addEventListener("touchmove", onMove, { passive: false })
+    window.addEventListener("touchend", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+      window.removeEventListener("touchmove", onMove)
+      window.removeEventListener("touchend", onUp)
+    }
+  }, [handleMouseMove, handleMouseUp, handleCanvasPointerMove, handleCanvasPointerUp])
 
+  // ── Canvas click (deselect / create first node) ────────────────────────────
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
-      // Don't add node if we were panning
-      if (isPanning) return
-      
-      // If clicking on empty canvas with no nodes, add a root node
+      if (didMoveRef.current) return
       if (nodes.length === 0) {
-        const rect = svgRef.current?.getBoundingClientRect()
+        const rect = containerRef.current?.getBoundingClientRect()
         if (rect) {
-          const x = (e.clientX - rect.left - panOffset.x) / 1
-          const y = (e.clientY - rect.top - panOffset.y) / 1
-          const newNode: GraphNode = {
-            id: Date.now().toString(),
-            nickname: "Root",
-            state: "ABO",
-            x: Math.max(60, Math.min(svgSize.width - 60, x)),
-            y: Math.max(60, Math.min(svgSize.height - 60, y)),
-          }
-          onNodesChange([newNode])
+          const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
+          onNodesChange([{ id: Date.now().toString(), nickname: "Root", state: "ABO", x: world.x, y: world.y }])
           return
         }
       }
       setSelectedNodeId(null)
       setModalParentId(null)
     },
-    [nodes.length, svgSize, onNodesChange, isPanning, panOffset]
+    [nodes.length, onNodesChange, screenToWorld]
   )
 
+  // ── Add / delete ───────────────────────────────────────────────────────────
   const handleAddChild = useCallback(
     (parentId: string, nickname: string, state: "ABO" | "PP") => {
       const parent = nodes.find((n) => n.id === parentId)
       if (!parent) return
 
-      // Find angle that minimizes overlap with existing children
-      const connectedEdges = edges.filter(
-        (e) => e.source === parentId || e.target === parentId
-      )
-      const connectedNodes = connectedEdges.map((e) =>
-        e.source === parentId
-          ? nodes.find((n) => n.id === e.target)
-          : nodes.find((n) => n.id === e.source)
-      ).filter(Boolean) as GraphNode[]
+      const connectedEdges = edges.filter((e) => e.source === parentId || e.target === parentId)
+      const connectedNodes = connectedEdges
+        .map((e) => nodes.find((n) => n.id === (e.source === parentId ? e.target : e.source)))
+        .filter(Boolean) as GraphNode[]
 
       let bestAngle = 0
       let maxMinDist = 0
-
-      // Try 12 angles and pick the one with most distance from existing children
       for (let i = 0; i < 12; i++) {
         const testAngle = (i / 12) * Math.PI * 2
         let minDist = Infinity
-
         for (const cn of connectedNodes) {
           const existingAngle = Math.atan2(cn.y - parent.y, cn.x - parent.x)
-          const angleDiff = Math.abs(testAngle - existingAngle)
-          const normalizedDiff = Math.min(angleDiff, Math.PI * 2 - angleDiff)
-          minDist = Math.min(minDist, normalizedDiff)
+          const diff = Math.abs(testAngle - existingAngle)
+          minDist = Math.min(minDist, Math.min(diff, Math.PI * 2 - diff))
         }
-
-        if (minDist > maxMinDist) {
-          maxMinDist = minDist
-          bestAngle = testAngle
-        }
+        if (minDist > maxMinDist) { maxMinDist = minDist; bestAngle = testAngle }
       }
 
-      const dist = 140
+      const dist = 150
       const newNode: GraphNode = {
         id: Date.now().toString(),
         nickname,
         state,
-        x: Math.max(60, Math.min(svgSize.width - 60, parent.x + Math.cos(bestAngle) * dist)),
-        y: Math.max(30, Math.min(svgSize.height - 30, parent.y + Math.sin(bestAngle) * dist)),
+        x: parent.x + Math.cos(bestAngle) * dist,
+        y: parent.y + Math.sin(bestAngle) * dist,
       }
-      const newEdge: GraphEdge = { source: parentId, target: newNode.id }
       onNodesChange([...nodes, newNode])
-      onEdgesChange([...edges, newEdge])
-      setModalParentId(null)
-      setSelectedNodeId(null)
-    },
-    [nodes, edges, onNodesChange, onEdgesChange, svgSize]
-  )
-
-  const handleDeleteNode = useCallback(
-    (nodeId: string) => {
-      // Remove node and all connected edges
-      const newNodes = nodes.filter((n) => n.id !== nodeId)
-      const newEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId)
-      onNodesChange(newNodes)
-      onEdgesChange(newEdges)
+      onEdgesChange([...edges, { source: parentId, target: newNode.id }])
       setModalParentId(null)
       setSelectedNodeId(null)
     },
     [nodes, edges, onNodesChange, onEdgesChange]
   )
 
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      onNodesChange(nodes.filter((n) => n.id !== nodeId))
+      onEdgesChange(edges.filter((e) => e.source !== nodeId && e.target !== nodeId))
+      setModalParentId(null)
+      setSelectedNodeId(null)
+    },
+    [nodes, edges, onNodesChange, onEdgesChange]
+  )
+
+  // ── Auto-arrange ───────────────────────────────────────────────────────────
   const handleAutoArrange = useCallback(() => {
     if (nodes.length < 2) return
-    const arranged = autoArrangeNodes(nodes, edges, svgSize.width, svgSize.height, 150)
+    // Use a large virtual canvas for the layout algorithm, then fit to view
+    const arranged = autoArrangeNodes(nodes, edges, 2000, 2000, 150)
     onNodesChange(arranged)
-  }, [nodes, edges, svgSize, onNodesChange])
+    didFit.current = false
+    setTimeout(() => fitNodesToView(arranged, viewportSize.width, viewportSize.height), 0)
+  }, [nodes, edges, onNodesChange, fitNodesToView, viewportSize])
 
-  // Calculate crossing count for display
   const crossingCount = countEdgeCrossings(nodes, edges)
 
   return (
-    <div className="relative w-full h-full overflow-hidden">
-      {/* Auto-arrange button */}
+    <div ref={containerRef} className="relative w-full h-full overflow-hidden">
+      {/* Toolbar */}
       {nodes.length >= 2 && (
         <div className="absolute top-3 right-3 z-10 flex items-center gap-3">
           {crossingCount > 0 && (
-            <span
-              className="font-mono text-xs"
-              style={{ color: "oklch(0.65 0.2 25)" }}
-            >
+            <span className="font-mono text-xs" style={{ color: "oklch(0.65 0.2 25)" }}>
               {crossingCount} crossing{crossingCount > 1 ? "s" : ""}
             </span>
           )}
@@ -287,82 +326,90 @@ export default function GraphCanvas({
           >
             Auto Arrange
           </button>
+          <button
+            onClick={() => fitNodesToView(nodes, viewportSize.width, viewportSize.height)}
+            className="rounded-lg px-3 py-1.5 font-sans text-xs font-medium transition-all hover:opacity-80"
+            style={{
+              background: "oklch(0.15 0 0)",
+              border: "1px solid oklch(0.84 0.22 142 / 0.5)",
+              color: "oklch(0.84 0.22 142)",
+            }}
+          >
+            Fit
+          </button>
         </div>
       )}
 
+      {/* Full-screen SVG — pan/zoom applied to inner <g> */}
       <svg
-        ref={svgRef}
-        width={svgSize.width}
-        height={svgSize.height}
-        className="absolute inset-0 w-full h-full"
-        onMouseDown={handleCanvasMouseDown}
+        width={viewportSize.width}
+        height={viewportSize.height}
+        className="absolute inset-0"
+        onMouseDown={handleCanvasPointerDown}
+        onTouchStart={handleCanvasPointerDown}
         onClick={handleCanvasClick}
         style={{
           cursor: isPanning ? "grabbing" : draggingId ? "grabbing" : "grab",
-          transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
-          transformOrigin: "0 0",
+          touchAction: "none",
         }}
       >
-        {/* Edge lines */}
-        {edges.map((edge) => {
-          const source = nodes.find((n) => n.id === edge.source)
-          const target = nodes.find((n) => n.id === edge.target)
-          if (!source || !target) return null
-          return (
-            <line
-              key={`${edge.source}-${edge.target}`}
-              x1={source.x}
-              y1={source.y}
-              x2={target.x}
-              y2={target.y}
-              stroke="oklch(0.84 0.22 142)"
-              strokeWidth={1.5}
-              strokeOpacity={0.4}
-            />
-          )
-        })}
+        <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+          {/* Edges */}
+          {edges.map((edge) => {
+            const source = nodes.find((n) => n.id === edge.source)
+            const target = nodes.find((n) => n.id === edge.target)
+            if (!source || !target) return null
+            return (
+              <line
+                key={`${edge.source}-${edge.target}`}
+                x1={source.x} y1={source.y}
+                x2={target.x} y2={target.y}
+                stroke="oklch(0.84 0.22 142)"
+                strokeWidth={1.5 / zoom}
+                strokeOpacity={0.4}
+              />
+            )
+          })}
 
-        {/* Nodes via foreignObject for rich HTML */}
-        {nodes.map((node) => (
-          <foreignObject
-            key={node.id}
-            x={node.x - 45}
-            y={node.y - 45}
-            width={90}
-            height={90}
-            style={{ overflow: "visible" }}
-          >
-            <GraphNodeComponent
-              node={node}
-              isSelected={selectedNodeId === node.id}
-              onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
-              onClick={(e) => handleNodeClick(node.id, e)}
-              isDragging={draggingId === node.id}
-            />
-          </foreignObject>
-        ))}
+          {/* Nodes */}
+          {nodes.map((node) => (
+            <foreignObject
+              key={node.id}
+              x={node.x - NODE_RADIUS}
+              y={node.y - NODE_RADIUS}
+              width={NODE_RADIUS * 2}
+              height={NODE_RADIUS * 2}
+              style={{ overflow: "visible" }}
+            >
+              <GraphNodeComponent
+                node={node}
+                isSelected={selectedNodeId === node.id}
+                onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                onClick={(e) => handleNodeClick(node.id, e)}
+                isDragging={draggingId === node.id}
+              />
+            </foreignObject>
+          ))}
+        </g>
       </svg>
 
-      {/* Empty state hint */}
+      {/* Empty state */}
       {nodes.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <p
-            className="font-sans text-sm"
-            style={{ color: "oklch(0.45 0 0)" }}
-          >
-            Click anywhere to create your first node
+          <p className="font-sans text-sm" style={{ color: "oklch(0.45 0 0)" }}>
+            Tap anywhere to create your first node
           </p>
         </div>
       )}
 
-      {/* Add child modal */}
+      {/* Node action modal */}
       {modalParentId && (
         <AddChildModal
           parentNode={nodes.find((n) => n.id === modalParentId)!}
           onAdd={(nickname, state) => handleAddChild(modalParentId, nickname, state)}
           onDelete={handleDeleteNode}
           onClose={() => setModalParentId(null)}
-          svgSize={svgSize}
+          svgSize={viewportSize}
         />
       )}
     </div>
