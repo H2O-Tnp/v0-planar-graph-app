@@ -28,6 +28,8 @@ export default function GraphCanvas({
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
   const panStartRef = useRef({ x: 0, y: 0 })
+  // Track whether a move happened (to distinguish tap vs drag on touch)
+  const didMoveRef = useRef(false)
 
   // Resize observer
   useEffect(() => {
@@ -49,12 +51,13 @@ export default function GraphCanvas({
       const rect = svg.getBoundingClientRect()
       const clientX = "touches" in e ? e.touches[0].clientX : e.clientX
       const clientY = "touches" in e ? e.touches[0].clientY : e.clientY
+      // Subtract panOffset because the SVG is translated by panOffset
       return {
-        x: clientX - rect.left,
-        y: clientY - rect.top,
+        x: clientX - rect.left - panOffset.x,
+        y: clientY - rect.top - panOffset.y,
       }
     },
-    []
+    [panOffset]
   )
 
   const handleNodeMouseDown = useCallback(
@@ -69,18 +72,22 @@ export default function GraphCanvas({
         "touches" in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX
       const clientY =
         "touches" in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY
+      // Account for panOffset when computing drag offset
       dragOffset.current = {
-        x: clientX - rect.left - node.x,
-        y: clientY - rect.top - node.y,
+        x: clientX - rect.left - panOffset.x - node.x,
+        y: clientY - rect.top - panOffset.y - node.y,
       }
+      didMoveRef.current = false
       setDraggingId(nodeId)
     },
-    [nodes]
+    [nodes, panOffset]
   )
 
   const handleMouseMove = useCallback(
     (e: MouseEvent | TouchEvent) => {
       if (!draggingId) return
+      didMoveRef.current = true
+      if ("touches" in e) e.preventDefault()
       const pt = getSVGPoint(e)
       onNodesChange(
         nodes.map((n) =>
@@ -104,6 +111,11 @@ export default function GraphCanvas({
   const handleNodeClick = useCallback(
     (nodeId: string, e: React.MouseEvent) => {
       e.stopPropagation()
+      // Suppress click if the user dragged the node
+      if (didMoveRef.current) {
+        didMoveRef.current = false
+        return
+      }
       if (draggingId) return
       setSelectedNodeId(nodeId)
       setModalParentId(nodeId)
@@ -111,66 +123,82 @@ export default function GraphCanvas({
     [draggingId]
   )
 
-  const handleCanvasMouseDown = useCallback(
-    (e: React.MouseEvent<SVGSVGElement>) => {
-      // Only pan if clicking on empty canvas (not on a node)
-      const target = e.target as SVGElement
-      if (target.tagName !== "svg") return
-      
+  // --- Canvas pan handlers (mouse + touch) ---
+  const getClientXY = (e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent) => {
+    if ("touches" in e) {
+      const t = (e as TouchEvent).touches[0] ?? (e as TouchEvent).changedTouches[0]
+      return { clientX: t.clientX, clientY: t.clientY }
+    }
+    return { clientX: (e as MouseEvent).clientX, clientY: (e as MouseEvent).clientY }
+  }
+
+  const handleCanvasPointerDown = useCallback(
+    (e: React.MouseEvent<SVGSVGElement> | React.TouchEvent<SVGSVGElement>) => {
+      // Only pan if touching the background (svg or rect/line, not a node)
+      const target = e.target as Element
+      const tagName = target.tagName.toLowerCase()
+      if (tagName !== "svg" && tagName !== "line" && tagName !== "rect") return
+      const { clientX, clientY } = getClientXY(e as unknown as MouseEvent)
       setIsPanning(true)
+      didMoveRef.current = false
       panStartRef.current = {
-        x: e.clientX - panOffset.x,
-        y: e.clientY - panOffset.y,
+        x: clientX - panOffset.x,
+        y: clientY - panOffset.y,
       }
     },
     [panOffset]
   )
 
-  const handleCanvasMouseMove = useCallback(
-    (e: MouseEvent) => {
+  const handleCanvasPointerMove = useCallback(
+    (e: MouseEvent | TouchEvent) => {
       if (!isPanning) return
-      const newPanOffset = {
-        x: e.clientX - panStartRef.current.x,
-        y: e.clientY - panStartRef.current.y,
-      }
-      setPanOffset(newPanOffset)
+      const { clientX, clientY } = getClientXY(e)
+      didMoveRef.current = true
+      setPanOffset({
+        x: clientX - panStartRef.current.x,
+        y: clientY - panStartRef.current.y,
+      })
     },
     [isPanning]
   )
 
-  const handleCanvasMouseUp = useCallback(() => {
+  const handleCanvasPointerUp = useCallback(() => {
     setIsPanning(false)
   }, [])
 
-  // Global mouse/touch listeners for dragging nodes and panning
+  // Global move/up listeners for both node drag and canvas pan
   useEffect(() => {
-    window.addEventListener("mousemove", handleMouseMove)
-    window.addEventListener("mousemove", handleCanvasMouseMove)
-    window.addEventListener("mouseup", handleMouseUp)
-    window.addEventListener("mouseup", handleCanvasMouseUp)
-    window.addEventListener("touchmove", handleMouseMove, { passive: false })
-    window.addEventListener("touchend", handleMouseUp)
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove)
-      window.removeEventListener("mousemove", handleCanvasMouseMove)
-      window.removeEventListener("mouseup", handleMouseUp)
-      window.removeEventListener("mouseup", handleCanvasMouseUp)
-      window.removeEventListener("touchmove", handleMouseMove)
-      window.removeEventListener("touchend", handleMouseUp)
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      handleMouseMove(e)
+      handleCanvasPointerMove(e)
     }
-  }, [handleMouseMove, handleMouseUp, handleCanvasMouseMove, handleCanvasMouseUp])
+    const onUp = () => {
+      handleMouseUp()
+      handleCanvasPointerUp()
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    window.addEventListener("touchmove", onMove, { passive: false })
+    window.addEventListener("touchend", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+      window.removeEventListener("touchmove", onMove)
+      window.removeEventListener("touchend", onUp)
+    }
+  }, [handleMouseMove, handleMouseUp, handleCanvasPointerMove, handleCanvasPointerUp])
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
-      // Don't add node if we were panning
-      if (isPanning) return
-      
+      // Don't fire if we were panning/dragging
+      if (didMoveRef.current) return
+
       // If clicking on empty canvas with no nodes, add a root node
       if (nodes.length === 0) {
         const rect = svgRef.current?.getBoundingClientRect()
         if (rect) {
-          const x = (e.clientX - rect.left - panOffset.x) / 1
-          const y = (e.clientY - rect.top - panOffset.y) / 1
+          const x = e.clientX - rect.left - panOffset.x
+          const y = e.clientY - rect.top - panOffset.y
           const newNode: GraphNode = {
             id: Date.now().toString(),
             nickname: "Root",
@@ -185,7 +213,7 @@ export default function GraphCanvas({
       setSelectedNodeId(null)
       setModalParentId(null)
     },
-    [nodes.length, svgSize, onNodesChange, isPanning, panOffset]
+    [nodes.length, svgSize, onNodesChange, panOffset]
   )
 
   const handleAddChild = useCallback(
@@ -295,12 +323,14 @@ export default function GraphCanvas({
         width={svgSize.width}
         height={svgSize.height}
         className="absolute inset-0 w-full h-full"
-        onMouseDown={handleCanvasMouseDown}
+        onMouseDown={handleCanvasPointerDown}
+        onTouchStart={handleCanvasPointerDown}
         onClick={handleCanvasClick}
         style={{
           cursor: isPanning ? "grabbing" : draggingId ? "grabbing" : "grab",
           transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
           transformOrigin: "0 0",
+          touchAction: "none",
         }}
       >
         {/* Edge lines */}
