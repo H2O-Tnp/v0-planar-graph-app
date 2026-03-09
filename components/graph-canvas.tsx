@@ -201,11 +201,16 @@ export default function GraphCanvas({
 
     const onPointerUp = (e: PointerEvent) => {
       activePointers.current.delete(e.pointerId)
+      
+      // When transitioning from 2 fingers to 1, reset pinch and stop panning
+      // to prevent the remaining finger from causing a pan jump
       if (activePointers.current.size < 2) {
         lastPinchDist.current = null
-      }
-      if (activePointers.current.size === 0) {
+        // Stop panning when coming out of a pinch - user must re-initiate pan
         setIsPanning(false)
+      }
+      
+      if (activePointers.current.size === 0) {
         setDraggingId(null)
       }
     }
