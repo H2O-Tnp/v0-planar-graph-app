@@ -36,6 +36,8 @@ export default function GraphCanvas({
   const [modalParentId, setModalParentId] = useState<string | null>(null)
 
   //
+  const [isArranging, setIsArranging] = useState(false)
+  //
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
   const dragPosRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -45,6 +47,7 @@ export default function GraphCanvas({
   const panStartRef = useRef({ x: 0, y: 0 })
   const didMoveRef = useRef(false)
   const lastPinchDist = useRef<number | null>(null)
+
 
   // ADD THESE LINES: Create a ref to hold the latest state to avoid listener thrashing
   const stateRef = useRef({ draggingId, isPanning, nodes, pan, zoom, onNodesChange })
@@ -330,13 +333,20 @@ export default function GraphCanvas({
     [nodes, edges, onNodesChange, onEdgesChange]
   )
 
-  const handleAutoArrange = useCallback(() => {
-    if (nodes.length < 2) return
-    const arranged = autoArrangeNodes(nodes, edges, 2000, 2000, 150)
-    onNodesChange(arranged)
-    didFit.current = false
-    setTimeout(() => fitNodesToView(arranged, viewportSize.width, viewportSize.height), 0)
-  }, [nodes, edges, onNodesChange, fitNodesToView, viewportSize])
+  const handleAutoArrange = useCallback(async () => {
+    if (nodes.length < 2 || isArranging) return
+    setIsArranging(true)
+
+    try {
+      // Now we await the layout calculation!
+      const arranged = await autoArrangeNodes(nodes, edges, 2000, 2000, 150)
+      onNodesChange(arranged)
+      didFit.current = false
+      setTimeout(() => fitNodesToView(arranged, viewportSize.width, viewportSize.height), 0)
+    } finally {
+      setIsArranging(false)
+    }
+  }, [nodes, edges, onNodesChange, fitNodesToView, viewportSize, isArranging])
 
   const crossingCount = countEdgeCrossings(nodes, edges)
 
@@ -352,14 +362,16 @@ export default function GraphCanvas({
           )}
           <button
             onClick={handleAutoArrange}
-            className="rounded-lg px-3 py-1.5 font-sans text-xs font-medium transition-all hover:opacity-80"
+            disabled={isArranging}
+            className={`rounded-lg px-3 py-1.5 font-sans text-xs font-medium transition-all ${isArranging ? "opacity-50 cursor-not-allowed" : "hover:opacity-80"
+              }`}
             style={{
               background: "oklch(0.15 0 0)",
               border: "1px solid oklch(0.84 0.22 142 / 0.5)",
               color: "oklch(0.84 0.22 142)",
             }}
           >
-            Auto Arrange
+            {isArranging ? "Arranging..." : "Auto Arrange"}
           </button>
           <button
             onClick={() => fitNodesToView(nodes, viewportSize.width, viewportSize.height)}
