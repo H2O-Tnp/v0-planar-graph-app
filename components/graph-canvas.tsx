@@ -25,7 +25,6 @@ export default function GraphCanvas({
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [viewportSize, setViewportSize] = useState({ width: 375, height: 600 })
-  // pan/zoom state — transform applied to the inner <g>
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
 
@@ -34,14 +33,13 @@ export default function GraphCanvas({
   const dragOffset = useRef({ x: 0, y: 0 })
   const [modalParentId, setModalParentId] = useState<string | null>(null)
 
-  // panning state
+  // Unified Pointer Event State
+  const activePointers = useRef<Map<number, PointerEvent>>(new Map())
   const [isPanning, setIsPanning] = useState(false)
   const panStartRef = useRef({ x: 0, y: 0 })
   const didMoveRef = useRef(false)
-  // track previous pinch distance for zoom
   const lastPinchDist = useRef<number | null>(null)
 
-  // Observe container size
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -54,15 +52,13 @@ export default function GraphCanvas({
     return () => obs.disconnect()
   }, [])
 
-  // Fit all nodes into view whenever nodes first load or viewport changes
   const didFit = useRef(false)
   useEffect(() => {
     if (nodes.length === 0) { didFit.current = false; return }
     if (didFit.current) return
     didFit.current = true
     fitNodesToView(nodes, viewportSize.width, viewportSize.height)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes.length > 0, viewportSize.width, viewportSize.height])
+  }, [nodes.length, viewportSize.width, viewportSize.height])
 
   const fitNodesToView = useCallback(
     (nodeList: GraphNode[], vw: number, vh: number) => {
@@ -79,7 +75,7 @@ export default function GraphCanvas({
       const newZoom = Math.min(
         (vw - padding * 2) / contentW,
         (vh - padding * 2) / contentH,
-        1 // don't zoom in past 1x
+        1
       )
       const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom))
       const newPanX = (vw - contentW * clampedZoom) / 2 - minX * clampedZoom
@@ -90,7 +86,6 @@ export default function GraphCanvas({
     []
   )
 
-  // Convert screen coordinates to world (canvas) coordinates
   const screenToWorld = useCallback(
     (sx: number, sy: number) => ({
       x: (sx - pan.x) / zoom,
@@ -99,48 +94,22 @@ export default function GraphCanvas({
     [pan, zoom]
   )
 
-  // ── Node dragging ──────────────────────────────────────────────────────────
-  const handleNodeMouseDown = useCallback(
-    (e: React.MouseEvent | React.TouchEvent, nodeId: string) => {
+  // ── Node dragging (Pointer) ──
+  const handleNodePointerDown = useCallback(
+    (e: React.PointerEvent, nodeId: string) => {
       e.stopPropagation()
       const node = nodes.find((n) => n.id === nodeId)
       if (!node) return
       const rect = containerRef.current?.getBoundingClientRect()
       if (!rect) return
-      const clientX = "touches" in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX
-      const clientY = "touches" in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY
-      const worldPos = screenToWorld(clientX - rect.left, clientY - rect.top)
+
+      const worldPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
       dragOffset.current = { x: worldPos.x - node.x, y: worldPos.y - node.y }
       didMoveRef.current = false
       setDraggingId(nodeId)
     },
     [nodes, screenToWorld]
   )
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent | TouchEvent) => {
-      if (!draggingId) return
-      didMoveRef.current = true
-      if ("touches" in e) e.preventDefault()
-      const rect = containerRef.current?.getBoundingClientRect()
-      if (!rect) return
-      const clientX = "touches" in e ? e.touches[0].clientX : (e as MouseEvent).clientX
-      const clientY = "touches" in e ? e.touches[0].clientY : (e as MouseEvent).clientY
-      const world = screenToWorld(clientX - rect.left, clientY - rect.top)
-      onNodesChange(
-        nodes.map((n) =>
-          n.id === draggingId
-            ? { ...n, x: world.x - dragOffset.current.x, y: world.y - dragOffset.current.y }
-            : n
-        )
-      )
-    },
-    [draggingId, screenToWorld, nodes, onNodesChange]
-  )
-
-  const handleMouseUp = useCallback(() => {
-    setDraggingId(null)
-  }, [])
 
   const handleNodeClick = useCallback(
     (nodeId: string, e: React.MouseEvent) => {
@@ -153,36 +122,51 @@ export default function GraphCanvas({
     [draggingId]
   )
 
-  // ── Canvas panning ─────────────────────────────────────────────────────────
-  const getClientXY = (e: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent) => {
-    if ("touches" in e) {
-      const t = (e as TouchEvent).touches[0] ?? (e as TouchEvent).changedTouches[0]
-      return { clientX: t.clientX, clientY: t.clientY }
-    }
-    return { clientX: (e as MouseEvent).clientX, clientY: (e as MouseEvent).clientY }
-  }
-
+  // ── Canvas panning (Pointer) ──
   const handleCanvasPointerDown = useCallback(
-    (e: React.MouseEvent<SVGSVGElement> | React.TouchEvent<SVGSVGElement>) => {
+    (e: React.PointerEvent<SVGSVGElement>) => {
       const target = e.target as Element
       const tagName = target.tagName.toLowerCase()
       if (tagName !== "svg" && tagName !== "line" && tagName !== "g" && tagName !== "rect") return
-      // Pinch-to-zoom: two touches — handled in move
-      if ("touches" in e && (e as React.TouchEvent).touches.length === 2) return
-      const { clientX, clientY } = getClientXY(e as unknown as MouseEvent)
+
+      activePointers.current.set(e.pointerId, e.nativeEvent)
+      if (activePointers.current.size === 2) return // Handled in move as zoom
+
       setIsPanning(true)
       didMoveRef.current = false
-      panStartRef.current = { x: clientX - pan.x, y: clientY - pan.y }
+      panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }
     },
     [pan]
   )
 
-  const handleCanvasPointerMove = useCallback(
-    (e: MouseEvent | TouchEvent) => {
-      // Pinch-to-zoom
-      if ("touches" in e && (e as TouchEvent).touches.length === 2) {
-        const t = (e as TouchEvent).touches
-        const dist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+  // ── Global Pointer Event Listeners ──
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      if (activePointers.current.has(e.pointerId)) {
+        activePointers.current.set(e.pointerId, e)
+      }
+
+      // Handle Node Dragging
+      if (draggingId) {
+        didMoveRef.current = true
+        const rect = containerRef.current?.getBoundingClientRect()
+        if (!rect) return
+        const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
+
+        onNodesChange(
+          nodes.map((n) =>
+            n.id === draggingId
+              ? { ...n, x: world.x - dragOffset.current.x, y: world.y - dragOffset.current.y }
+              : n
+          )
+        )
+        return
+      }
+
+      // Handle Pinch to Zoom
+      if (activePointers.current.size === 2) {
+        const pts = Array.from(activePointers.current.values())
+        const dist = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY)
         if (lastPinchDist.current !== null) {
           const delta = dist / lastPinchDist.current
           setZoom((z) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * delta)))
@@ -190,42 +174,37 @@ export default function GraphCanvas({
         lastPinchDist.current = dist
         return
       }
-      if (!isPanning) return
-      didMoveRef.current = true
-      const { clientX, clientY } = getClientXY(e)
-      setPan({ x: clientX - panStartRef.current.x, y: clientY - panStartRef.current.y })
-    },
-    [isPanning]
-  )
 
-  const handleCanvasPointerUp = useCallback(() => {
-    setIsPanning(false)
-    lastPinchDist.current = null
-  }, [])
+      // Handle Panning
+      if (isPanning) {
+        didMoveRef.current = true
+        setPan({ x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y })
+      }
+    }
 
-  // ── Global listeners ───────────────────────────────────────────────────────
-  useEffect(() => {
-    const onMove = (e: MouseEvent | TouchEvent) => {
-      handleMouseMove(e)
-      handleCanvasPointerMove(e)
+    const onPointerUp = (e: PointerEvent) => {
+      activePointers.current.delete(e.pointerId)
+      if (activePointers.current.size < 2) {
+        lastPinchDist.current = null
+      }
+      if (activePointers.current.size === 0) {
+        setIsPanning(false)
+        setDraggingId(null)
+      }
     }
-    const onUp = () => {
-      handleMouseUp()
-      handleCanvasPointerUp()
-    }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    window.addEventListener("touchmove", onMove, { passive: false })
-    window.addEventListener("touchend", onUp)
+
+    window.addEventListener("pointermove", onPointerMove)
+    window.addEventListener("pointerup", onPointerUp)
+    window.addEventListener("pointercancel", onPointerUp)
+
     return () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-      window.removeEventListener("touchmove", onMove)
-      window.removeEventListener("touchend", onUp)
+      window.removeEventListener("pointermove", onPointerMove)
+      window.removeEventListener("pointerup", onPointerUp)
+      window.removeEventListener("pointercancel", onPointerUp)
     }
-  }, [handleMouseMove, handleMouseUp, handleCanvasPointerMove, handleCanvasPointerUp])
+  }, [draggingId, isPanning, nodes, onNodesChange, screenToWorld])
 
-  // ── Canvas click (deselect / create first node) ────────────────────────────
+  // ── Canvas click (deselect / create first node) ──
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
       if (didMoveRef.current) return
@@ -243,7 +222,7 @@ export default function GraphCanvas({
     [nodes.length, onNodesChange, screenToWorld]
   )
 
-  // ── Add / delete ───────────────────────────────────────────────────────────
+  // ── Add / Edit / Delete ──
   const handleAddChild = useCallback(
     (parentId: string, nickname: string, state: "ABO" | "PP") => {
       const parent = nodes.find((n) => n.id === parentId)
@@ -283,6 +262,15 @@ export default function GraphCanvas({
     [nodes, edges, onNodesChange, onEdgesChange]
   )
 
+  const handleEditNode = useCallback(
+    (nodeId: string, nickname: string, state: "ABO" | "PP") => {
+      onNodesChange(nodes.map(n => n.id === nodeId ? { ...n, nickname, state } : n))
+      setModalParentId(null)
+      setSelectedNodeId(null)
+    },
+    [nodes, onNodesChange]
+  )
+
   const handleDeleteNode = useCallback(
     (nodeId: string) => {
       onNodesChange(nodes.filter((n) => n.id !== nodeId))
@@ -293,10 +281,8 @@ export default function GraphCanvas({
     [nodes, edges, onNodesChange, onEdgesChange]
   )
 
-  // ── Auto-arrange ───────────────────────────────────────────────────────────
   const handleAutoArrange = useCallback(() => {
     if (nodes.length < 2) return
-    // Use a large virtual canvas for the layout algorithm, then fit to view
     const arranged = autoArrangeNodes(nodes, edges, 2000, 2000, 150)
     onNodesChange(arranged)
     didFit.current = false
@@ -340,13 +326,12 @@ export default function GraphCanvas({
         </div>
       )}
 
-      {/* Full-screen SVG — pan/zoom applied to inner <g> */}
+      {/* Full-screen SVG */}
       <svg
         width={viewportSize.width}
         height={viewportSize.height}
         className="absolute inset-0"
-        onMouseDown={handleCanvasPointerDown}
-        onTouchStart={handleCanvasPointerDown}
+        onPointerDown={handleCanvasPointerDown}
         onClick={handleCanvasClick}
         style={{
           cursor: isPanning ? "grabbing" : draggingId ? "grabbing" : "grab",
@@ -354,7 +339,6 @@ export default function GraphCanvas({
         }}
       >
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-          {/* Edges */}
           {edges.map((edge) => {
             const source = nodes.find((n) => n.id === edge.source)
             const target = nodes.find((n) => n.id === edge.target)
@@ -371,7 +355,6 @@ export default function GraphCanvas({
             )
           })}
 
-          {/* Nodes */}
           {nodes.map((node) => (
             <foreignObject
               key={node.id}
@@ -384,7 +367,7 @@ export default function GraphCanvas({
               <GraphNodeComponent
                 node={node}
                 isSelected={selectedNodeId === node.id}
-                onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                onPointerDown={(e) => handleNodePointerDown(e, node.id)}
                 onClick={(e) => handleNodeClick(node.id, e)}
                 isDragging={draggingId === node.id}
               />
@@ -407,9 +390,12 @@ export default function GraphCanvas({
         <AddChildModal
           parentNode={nodes.find((n) => n.id === modalParentId)!}
           onAdd={(nickname, state) => handleAddChild(modalParentId, nickname, state)}
+          onEdit={(nickname, state) => handleEditNode(modalParentId, nickname, state)}
           onDelete={handleDeleteNode}
           onClose={() => setModalParentId(null)}
           svgSize={viewportSize}
+          pan={pan}
+          zoom={zoom}
         />
       )}
     </div>
