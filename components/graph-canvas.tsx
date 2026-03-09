@@ -166,13 +166,27 @@ export default function GraphCanvas({
         return
       }
 
-      // Handle Pinch to Zoom
+      // Handle Pinch to Zoom - zoom toward the midpoint of the two fingers
       if (activePointers.current.size === 2) {
         const pts = Array.from(activePointers.current.values())
         const dist = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY)
         if (lastPinchDist.current !== null) {
-          const delta = dist / lastPinchDist.current
-          setZoom((z) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * delta)))
+          const rect = containerRef.current?.getBoundingClientRect()
+          if (rect) {
+            const delta = dist / lastPinchDist.current
+            // Midpoint of the two fingers in screen space
+            const midX = (pts[0].clientX + pts[1].clientX) / 2 - rect.left
+            const midY = (pts[0].clientY + pts[1].clientY) / 2 - rect.top
+            // Zoom toward the midpoint
+            setZoom((z) => {
+              const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * delta))
+              setPan((p) => ({
+                x: midX - (midX - p.x) * (newZoom / z),
+                y: midY - (midY - p.y) * (newZoom / z),
+              }))
+              return newZoom
+            })
+          }
         }
         lastPinchDist.current = dist
         return
@@ -334,6 +348,7 @@ export default function GraphCanvas({
         width={viewportSize.width}
         height={viewportSize.height}
         className="absolute inset-0"
+        overflow="visible"
         onPointerDown={handleCanvasPointerDown}
         onClick={handleCanvasClick}
         style={{
@@ -352,7 +367,7 @@ export default function GraphCanvas({
                 x1={source.x} y1={source.y}
                 x2={target.x} y2={target.y}
                 stroke="oklch(0.84 0.22 142)"
-                strokeWidth={1.5 / zoom}
+                strokeWidth={1.5}
                 strokeOpacity={0.4}
               />
             )
@@ -365,7 +380,7 @@ export default function GraphCanvas({
               y={node.y - NODE_RADIUS}
               width={NODE_RADIUS * 2}
               height={NODE_RADIUS * 2}
-              style={{ overflow: "visible" }}
+              overflow="visible"
             >
               <GraphNodeComponent
                 node={node}
