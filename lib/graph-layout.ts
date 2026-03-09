@@ -70,23 +70,21 @@ export function countEdgeCrossings(nodes: GraphNode[], edges: GraphEdge[]): numb
   return crossings
 }
 
-// Force-directed layout with edge crossing minimization
-export function autoArrangeNodes(
+// Force-directed layout with edge crossing minimization (Async Version)
+export async function autoArrangeNodes(
   nodes: GraphNode[],
   edges: GraphEdge[],
   width: number,
   height: number,
   iterations: number = 100
-): GraphNode[] {
+): Promise<GraphNode[]> { // <-- Note the Promise return type
   if (nodes.length === 0) return nodes
 
-  // Create working copy with velocities
   const nodeMap = new Map<string, { x: number; y: number; vx: number; vy: number }>()
   nodes.forEach((n) => {
     nodeMap.set(n.id, { x: n.x, y: n.y, vx: 0, vy: 0 })
   })
 
-  // Build adjacency set for quick lookup
   const adjacency = new Map<string, Set<string>>()
   nodes.forEach((n) => adjacency.set(n.id, new Set()))
   edges.forEach((e) => {
@@ -98,10 +96,15 @@ export function autoArrangeNodes(
   const idealEdgeLength = MIN_DISTANCE * 1.5
 
   for (let iter = 0; iter < iterations; iter++) {
-    const temperature = 1 - iter / iterations // Cooling schedule
+    // YIELD TO MAIN THREAD EVERY 25 ITERATIONS
+    // This prevents the browser UI from freezing during heavy math
+    if (iter > 0 && iter % 25 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    const temperature = 1 - iter / iterations
     const forceMult = temperature * 0.3
 
-    // Reset forces
     nodeMap.forEach((n) => {
       n.vx = 0
       n.vy = 0
@@ -132,7 +135,7 @@ export function autoArrangeNodes(
       }
     }
 
-    // Attraction along edges (spring force)
+    // Attraction along edges
     edges.forEach((e) => {
       const n1 = nodeMap.get(e.source)
       const n2 = nodeMap.get(e.target)
@@ -152,7 +155,7 @@ export function autoArrangeNodes(
       n2.vy -= fy
     })
 
-    // Repel nodes from edges they're not connected to (helps planarity)
+    // Repel from edges
     edges.forEach((e) => {
       const source = nodeMap.get(e.source)
       const target = nodeMap.get(e.target)
@@ -164,7 +167,6 @@ export function autoArrangeNodes(
 
         const dist = pointToSegmentDistance(node, source, target)
         if (dist < EDGE_REPULSION && dist > 0) {
-          // Push node away from edge
           const edgeMidX = (source.x + target.x) / 2
           const edgeMidY = (source.y + target.y) / 2
           const dx = node.x - edgeMidX
@@ -178,18 +180,14 @@ export function autoArrangeNodes(
       })
     })
 
-    // Apply velocities with boundary constraints
     nodeMap.forEach((n) => {
       n.x += n.vx
       n.y += n.vy
-
-      // Keep within bounds
       n.x = Math.max(padding, Math.min(width - padding, n.x))
       n.y = Math.max(padding, Math.min(height - padding, n.y))
     })
   }
 
-  // Return updated nodes
   return nodes.map((n) => {
     const pos = nodeMap.get(n.id)!
     return { ...n, x: Math.round(pos.x), y: Math.round(pos.y) }

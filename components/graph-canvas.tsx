@@ -10,6 +10,8 @@ const NODE_RADIUS = 45
 const MIN_ZOOM = 0.2
 const MAX_ZOOM = 3
 
+
+
 interface GraphCanvasProps {
   nodes: GraphNode[]
   edges: GraphEdge[]
@@ -33,12 +35,25 @@ export default function GraphCanvas({
   const dragOffset = useRef({ x: 0, y: 0 })
   const [modalParentId, setModalParentId] = useState<string | null>(null)
 
+  //
+  const [isArranging, setIsArranging] = useState(false)
+  //
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
+  const dragPosRef = useRef<{ x: number; y: number } | null>(null)
+
   // Unified Pointer Event State
   const activePointers = useRef<Map<number, PointerEvent>>(new Map())
   const [isPanning, setIsPanning] = useState(false)
   const panStartRef = useRef({ x: 0, y: 0 })
   const didMoveRef = useRef(false)
   const lastPinchDist = useRef<number | null>(null)
+
+
+  // ADD THESE LINES: Create a ref to hold the latest state to avoid listener thrashing
+  const stateRef = useRef({ draggingId, isPanning, nodes, pan, zoom, onNodesChange })
+  useEffect(() => {
+    stateRef.current = { draggingId, isPanning, nodes, pan, zoom, onNodesChange }
+  }, [draggingId, isPanning, nodes, pan, zoom, onNodesChange])
 
   useEffect(() => {
     const el = containerRef.current
@@ -145,28 +160,32 @@ export default function GraphCanvas({
   // ── Global Pointer Event Listeners ──
   useEffect(() => {
     const onPointerMove = (e: PointerEvent) => {
+      // Always get the absolute latest state without triggering re-renders
+      const state = stateRef.current
+
       if (activePointers.current.has(e.pointerId)) {
         activePointers.current.set(e.pointerId, e)
       }
 
-      // Handle Node Dragging
-      if (draggingId) {
+      // Handle Node Dragging Locally
+      if (state.draggingId) {
         didMoveRef.current = true
         const rect = containerRef.current?.getBoundingClientRect()
         if (!rect) return
-        const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
 
-        onNodesChange(
-          nodes.map((n) =>
-            n.id === draggingId
-              ? { ...n, x: world.x - dragOffset.current.x, y: world.y - dragOffset.current.y }
-              : n
-          )
-        )
+        // Inline screenToWorld calculation using the latest ref state
+        const worldX = (e.clientX - rect.left - state.pan.x) / state.zoom
+        const worldY = (e.clientY - rect.top - state.pan.y) / state.zoom
+
+        const newX = worldX - dragOffset.current.x
+        const newY = worldY - dragOffset.current.y
+
+        setDragPos({ x: newX, y: newY })
+        dragPosRef.current = { x: newX, y: newY }
         return
       }
 
-      // Handle Pinch to Zoom - zoom toward the midpoint of the two fingers
+      // Handle Pinch to Zoom
       if (activePointers.current.size === 2) {
         const pts = Array.from(activePointers.current.values())
         const dist = Math.hypot(pts[0].clientX - pts[1].clientX, pts[0].clientY - pts[1].clientY)
@@ -174,10 +193,10 @@ export default function GraphCanvas({
           const rect = containerRef.current?.getBoundingClientRect()
           if (rect) {
             const delta = dist / lastPinchDist.current
-            // Midpoint of the two fingers in screen space
             const midX = (pts[0].clientX + pts[1].clientX) / 2 - rect.left
             const midY = (pts[0].clientY + pts[1].clientY) / 2 - rect.top
-            // Zoom toward the midpoint
+
+            // setZoom and setPan are stable state setters, so they don't need to be in the ref
             setZoom((z) => {
               const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z * delta))
               setPan((p) => ({
@@ -193,20 +212,36 @@ export default function GraphCanvas({
       }
 
       // Handle Panning
-      if (isPanning) {
+      if (state.isPanning) {
         didMoveRef.current = true
         setPan({ x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y })
       }
     }
 
     const onPointerUp = (e: PointerEvent) => {
+      const state = stateRef.current
+
       activePointers.current.delete(e.pointerId)
       if (activePointers.current.size < 2) {
         lastPinchDist.current = null
       }
+
       if (activePointers.current.size === 0) {
+        // COMMIT DRAG TO PARENT ON DROP using the latest ref state
+        if (state.draggingId && dragPosRef.current) {
+          state.onNodesChange(
+            state.nodes.map((n) =>
+              n.id === state.draggingId
+                ? { ...n, x: dragPosRef.current!.x, y: dragPosRef.current!.y }
+                : n
+            )
+          )
+        }
+
         setIsPanning(false)
         setDraggingId(null)
+        setDragPos(null)
+        dragPosRef.current = null
       }
     }
 
@@ -219,7 +254,7 @@ export default function GraphCanvas({
       window.removeEventListener("pointerup", onPointerUp)
       window.removeEventListener("pointercancel", onPointerUp)
     }
-  }, [draggingId, isPanning, nodes, onNodesChange, screenToWorld])
+  }, []) // <-- Empty dependency array! The listener is only added once.
 
   // ── Canvas click (deselect / create first node) ──
   const handleCanvasClick = useCallback(
@@ -298,13 +333,20 @@ export default function GraphCanvas({
     [nodes, edges, onNodesChange, onEdgesChange]
   )
 
-  const handleAutoArrange = useCallback(() => {
-    if (nodes.length < 2) return
-    const arranged = autoArrangeNodes(nodes, edges, 2000, 2000, 150)
-    onNodesChange(arranged)
-    didFit.current = false
-    setTimeout(() => fitNodesToView(arranged, viewportSize.width, viewportSize.height), 0)
-  }, [nodes, edges, onNodesChange, fitNodesToView, viewportSize])
+  const handleAutoArrange = useCallback(async () => {
+    if (nodes.length < 2 || isArranging) return
+    setIsArranging(true)
+
+    try {
+      // Now we await the layout calculation!
+      const arranged = await autoArrangeNodes(nodes, edges, 2000, 2000, 150)
+      onNodesChange(arranged)
+      didFit.current = false
+      setTimeout(() => fitNodesToView(arranged, viewportSize.width, viewportSize.height), 0)
+    } finally {
+      setIsArranging(false)
+    }
+  }, [nodes, edges, onNodesChange, fitNodesToView, viewportSize, isArranging])
 
   const crossingCount = countEdgeCrossings(nodes, edges)
 
@@ -320,14 +362,16 @@ export default function GraphCanvas({
           )}
           <button
             onClick={handleAutoArrange}
-            className="rounded-lg px-3 py-1.5 font-sans text-xs font-medium transition-all hover:opacity-80"
+            disabled={isArranging}
+            className={`rounded-lg px-3 py-1.5 font-sans text-xs font-medium transition-all ${isArranging ? "opacity-50 cursor-not-allowed" : "hover:opacity-80"
+              }`}
             style={{
               background: "oklch(0.15 0 0)",
               border: "1px solid oklch(0.84 0.22 142 / 0.5)",
               color: "oklch(0.84 0.22 142)",
             }}
           >
-            Auto Arrange
+            {isArranging ? "Arranging..." : "Auto Arrange"}
           </button>
           <button
             onClick={() => fitNodesToView(nodes, viewportSize.width, viewportSize.height)}
@@ -361,11 +405,18 @@ export default function GraphCanvas({
             const source = nodes.find((n) => n.id === edge.source)
             const target = nodes.find((n) => n.id === edge.target)
             if (!source || !target) return null
+
+            // Use dragPos if the node is currently being dragged
+            const sourceX = draggingId === source.id && dragPos ? dragPos.x : source.x
+            const sourceY = draggingId === source.id && dragPos ? dragPos.y : source.y
+            const targetX = draggingId === target.id && dragPos ? dragPos.x : target.x
+            const targetY = draggingId === target.id && dragPos ? dragPos.y : target.y
+
             return (
               <line
                 key={`${edge.source}-${edge.target}`}
-                x1={source.x} y1={source.y}
-                x2={target.x} y2={target.y}
+                x1={sourceX} y1={sourceY}
+                x2={targetX} y2={targetY}
                 stroke="oklch(0.84 0.22 142)"
                 strokeWidth={1.5}
                 strokeOpacity={0.4}
@@ -373,24 +424,31 @@ export default function GraphCanvas({
             )
           })}
 
-          {nodes.map((node) => (
-            <foreignObject
-              key={node.id}
-              x={node.x - NODE_RADIUS}
-              y={node.y - NODE_RADIUS}
-              width={NODE_RADIUS * 2}
-              height={NODE_RADIUS * 2}
-              overflow="visible"
-            >
-              <GraphNodeComponent
-                node={node}
-                isSelected={selectedNodeId === node.id}
-                onPointerDown={(e) => handleNodePointerDown(e, node.id)}
-                onClick={(e) => handleNodeClick(node.id, e)}
-                isDragging={draggingId === node.id}
-              />
-            </foreignObject>
-          ))}
+          {nodes.map((node) => {
+            // Use dragPos if the node is currently being dragged
+            const isDragging = draggingId === node.id
+            const displayX = isDragging && dragPos ? dragPos.x : node.x
+            const displayY = isDragging && dragPos ? dragPos.y : node.y
+
+            return (
+              <foreignObject
+                key={node.id}
+                x={displayX - NODE_RADIUS}
+                y={displayY - NODE_RADIUS}
+                width={NODE_RADIUS * 2}
+                height={NODE_RADIUS * 2}
+                overflow="visible"
+              >
+                <GraphNodeComponent
+                  node={node}
+                  isSelected={selectedNodeId === node.id}
+                  onPointerDown={(e) => handleNodePointerDown(e, node.id)}
+                  onClick={(e) => handleNodeClick(node.id, e)}
+                  isDragging={isDragging}
+                />
+              </foreignObject>
+            )
+          })}
         </g>
       </svg>
 

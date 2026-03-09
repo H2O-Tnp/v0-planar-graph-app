@@ -9,6 +9,7 @@ export default function HomePage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [saving, setSaving] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestDataRef = useRef<GraphData | null>(null)
   const { toast } = useToast()
 
   // Load on mount
@@ -30,10 +31,31 @@ export default function HomePage() {
       })
   }, [toast])
 
+  // Prevent data loss if user closes tab while a save is pending
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // If a timer is active, it means we have unsaved changes
+      if (saveTimerRef.current && latestDataRef.current) {
+        // SendBeacon is designed specifically to reliably send data as the page unloads
+        const blob = new Blob([JSON.stringify(latestDataRef.current)], {
+          type: "application/json"
+        })
+        navigator.sendBeacon("/api/graph", blob)
+      }
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
+  }, [])
+
   // Auto-save with debounce after changes
   const save = useCallback(
     (data: GraphData) => {
+      // Track the latest data for the beacon
+      latestDataRef.current = data
+
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+
       saveTimerRef.current = setTimeout(async () => {
         setSaving(true)
         try {
@@ -52,6 +74,8 @@ export default function HomePage() {
           })
         } finally {
           setSaving(false)
+          // Clear the ref so the beforeunload listener knows no save is pending
+          saveTimerRef.current = null
         }
       }, 800)
     },
