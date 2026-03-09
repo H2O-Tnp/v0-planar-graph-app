@@ -78,8 +78,11 @@ export default function GraphCanvas({
         1
       )
       const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom))
-      const newPanX = (vw - contentW * clampedZoom) / 2 - minX * clampedZoom
-      const newPanY = (vh - contentH * clampedZoom) / 2 - minY * clampedZoom
+      // Center the content in the viewport after scaling
+      const scaledContentW = contentW * clampedZoom
+      const scaledContentH = contentH * clampedZoom
+      const newPanX = (vw - scaledContentW) / 2 - minX * clampedZoom
+      const newPanY = (vh - scaledContentH) / 2 - minY * clampedZoom
       setPan({ x: newPanX, y: newPanY })
       setZoom(clampedZoom)
     },

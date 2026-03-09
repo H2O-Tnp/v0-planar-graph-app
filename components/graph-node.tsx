@@ -6,7 +6,7 @@ interface GraphNodeProps {
   node: GraphNode
   isSelected: boolean
   isDragging: boolean
-  onMouseDown: (e: React.MouseEvent | React.TouchEvent) => void
+  onPointerDown: (e: React.PointerEvent) => void
   onClick: (e: React.MouseEvent) => void
 }
 
@@ -16,7 +16,7 @@ export default function GraphNodeComponent({
   node,
   isSelected,
   isDragging,
-  onMouseDown,
+  onPointerDown,
   onClick,
 }: GraphNodeProps) {
   const isABO = node.state === "ABO"
@@ -24,8 +24,7 @@ export default function GraphNodeComponent({
 
   return (
     <div
-      onMouseDown={onMouseDown}
-      onTouchStart={onMouseDown}
+      onPointerDown={onPointerDown}
       onClick={(e) => {
         e.stopPropagation()
         onClick(e)
