@@ -3,41 +3,60 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { GraphData, GraphNode, GraphEdge } from "@/lib/graph-types"
 import GraphCanvas from "@/components/graph-canvas"
+import { useToast } from "@/hooks/use-toast"
 
 export default function HomePage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [saving, setSaving] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { toast } = useToast()
 
   // Load on mount
   useEffect(() => {
     fetch("/api/graph")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to fetch graph data")
+        return r.json()
+      })
       .then((data: GraphData) => setGraphData(data))
-      .catch(() =>
-        setGraphData({
-          nodes: [],
-          edges: [],
+      .catch((err) => {
+        console.error(err)
+        toast({
+          title: "Failed to load graph",
+          description: "Could not retrieve the saved graph. Starting fresh.",
+          variant: "destructive",
         })
-      )
-  }, [])
+        setGraphData({ nodes: [], edges: [] })
+      })
+  }, [toast])
 
   // Auto-save with debounce after changes
-  const save = useCallback((data: GraphData) => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(async () => {
-      setSaving(true)
-      try {
-        await fetch("/api/graph", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        })
-      } finally {
-        setSaving(false)
-      }
-    }, 800)
-  }, [])
+  const save = useCallback(
+    (data: GraphData) => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(async () => {
+        setSaving(true)
+        try {
+          const res = await fetch("/api/graph", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+          })
+          if (!res.ok) throw new Error("Save failed")
+        } catch (err) {
+          console.error(err)
+          toast({
+            title: "Save Failed",
+            description: "Your recent changes could not be saved to the server.",
+            variant: "destructive",
+          })
+        } finally {
+          setSaving(false)
+        }
+      }, 800)
+    },
+    [toast]
+  )
 
   const handleNodesChange = useCallback(
     (nodes: GraphNode[]) => {
@@ -88,7 +107,7 @@ export default function HomePage() {
             className="font-sans text-xs hidden sm:block"
             style={{ color: "oklch(0.45 0 0)" }}
           >
-            Click node to add child
+            Click node to add child or edit
           </span>
         </div>
         <div className="flex items-center gap-4">
@@ -108,9 +127,7 @@ export default function HomePage() {
             <div className="flex items-center gap-1.5">
               <div
                 className="w-3 h-3 rounded-sm animate-blink-border"
-                style={{
-                  border: "1.5px dashed oklch(0.84 0.22 142)",
-                }}
+                style={{ border: "1.5px dashed oklch(0.84 0.22 142)" }}
               />
               <span className="font-mono text-xs" style={{ color: "oklch(0.55 0 0)" }}>
                 PP
